@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <Spidermesh.h>
 #include <ETH.h>
+#include "esp_task_wdt.h"
 
 Spidermesh smk900;
 const int server_serial_port = 5556;
@@ -23,17 +24,18 @@ bool prevPollMode;
 IPAddress eth_add(192,168,0,30);
 IPAddress eth_gat(192,168,0,1);
 IPAddress eth_msk(255,255,255,0);
-IPAddress eth_gw1(192,168,0,1);
-IPAddress eth_gw2(8,8,8,8);
+IPAddress eth_dns1(192,168,0,1);
+IPAddress eth_dns2(8,8,8,8);
 
 void WhenPacketReceived(apiframe packet);
-
+bool addApiPacket(apiframe pkt);
+portMUX_TYPE mmux = portMUX_INITIALIZER_UNLOCKED;
 
 
 //---------------------------------------------------------------------------------------
 void WiFiEvent(WiFiEvent_t event)
 {
-    static int test = 0;
+
     switch (event)
     {
     case SYSTEM_EVENT_ETH_START:
@@ -44,7 +46,7 @@ void WiFiEvent(WiFiEvent_t event)
     case SYSTEM_EVENT_ETH_CONNECTED:
         Serial.println("ETH Connected");
         break;
-    case SYSTEM_EVENT_ETH_GOT_IP:
+    case ARDUINO_EVENT_ETH_GOT_IP:
             Serial.println("SYSTEM_EVENT_ETH_GOT_IP");
             Serial.print("ETH MAC: ");
             Serial.println(ETH.macAddress());
@@ -61,10 +63,10 @@ void WiFiEvent(WiFiEvent_t event)
             Serial.print(ETH.linkSpeed());
             Serial.println("Mbps");
         break;
-    case SYSTEM_EVENT_ETH_DISCONNECTED:
+    case ARDUINO_EVENT_ETH_DISCONNECTED:
         Serial.println("ETH Disconnected");
         break;
-    case SYSTEM_EVENT_ETH_STOP:
+    case ARDUINO_EVENT_ETH_STOP:
         Serial.println("ETH Stopped");
         break;
 
@@ -93,13 +95,12 @@ void initEthernet()
     //ETH.begin always before ETH.config
 	Serial.println("ETH BEGIN");
     ETH.begin(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE); 
-	ETH.config(eth_add,eth_gat,eth_msk,eth_gw1,eth_gw2);
+	ETH.config(eth_add,eth_gat,eth_msk,eth_dns1,eth_dns2);
 	Serial.println("ETH END");
 }
 
 void setup()
 {
-
 	Serial.begin(115200);
 	Serial.println("--RESET--");
 
@@ -137,26 +138,18 @@ void setup()
 
 
 	//to check or not all transaction with smk900 module
-	smk900.setApiMsgFlag(true,true,false); 
+	smk900.setApiMsgFlag(false,true,false); 
 
 	//radio will have already started to synch nodes at this point, but at the speed of mesh saved in eeprom
 	smk900.begin(nb_hops,duty_cycle,nb_byte_per_packet);
-
-	while(!smk900.isInitDone()) delay(10);
-
-
     
     // Bridge TCP to Serial API
 	WiFi.onEvent(WiFiEvent);
 
-    WiFi.softAP("APboot", "password",0,1,1);
-    delay(200);
-
 	initEthernet();
-    bridge.init();
-    smk900.cbWhenPacketReceived=WhenPacketReceived;
-    bridge.cbAddPacketToSmkTxBuffer = static_cast<bool(*)(apiframe)> (smk900.addApiPacketLowPriority);
-    bridge.cbWhenSmkPacketReceived = static_cast<void(*)(apiframe, String)> (printApiPacket);
+    bridge.cbAddPacketToSmkTxBuffer = addApiPacket;
+	if(!smk900.show_apipkt_in)    		
+        bridge.cbWhenSmkPacketReceived = static_cast<void(*)(apiframe, String)> (printApiPacket);
     
     bridge.cbConnecting= [](){
         Serial.println("Bridge connected");
@@ -167,12 +160,21 @@ void setup()
         Serial.println("Bridge disconnected");
         smk900.setAutoPolling(prevPollMode);            
     };
+
+    smk900.cbWhenPacketReceived=WhenPacketReceived;
+    bridge.init();
+
 }
 
 void loop()
 {
 	bridge.taskloop();
+}
 
+bool addApiPacket(apiframe pkt)
+{
+    smk900.addApiPacketLowPriority(pkt);
+    return true;
 }
 
 
@@ -181,6 +183,12 @@ void WhenPacketReceived(apiframe packet)
 {
     if(smk900.isInitDone())
     {
-     bridge.WhenNewSmkPacketRx(packet);
+     	//bridge.WhenNewSmkPacketRx(packet);
+		if(bridge.state == CONNECTED)
+        {
+            taskENTER_CRITICAL(&mmux);
+			bridge.packetList.push_back(packet);
+            taskEXIT_CRITICAL(&mmux);
+        }
     }  
 }

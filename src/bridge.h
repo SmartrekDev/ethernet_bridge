@@ -3,9 +3,8 @@
 #include <WiFi.h>
 #include <list>
 #include <vector>
-//#include "utils.h"
+#include "Spidermesh.h"
 
-typedef std::vector<byte> apiframe;
 
 
 
@@ -41,8 +40,6 @@ class Bridge
 
     static void init();
     static bool taskloop();
-    static size_t write();
-    static void putPacketInsideBuffer(apiframe packet, uint8_t* buffer);
     static bool isConnecting();
     static bool isDisconnecting();
     static bool isConnected(){return (state==CONNECTED);};

@@ -1,4 +1,7 @@
 #include "bridge.h"
+#include "utils.h"
+#include "Spidermesh.h"
+
 
 WiFiServer* Bridge::bridge_server;
 WiFiClient Bridge::client;
@@ -11,7 +14,7 @@ std::function<void()> Bridge::cbDisconnecting;
 std::function<void(apiframe pkt)> Bridge::cbAddPacketToSmkTxBuffer;
 std::function<void(apiframe pkt, String prefix)> Bridge::cbWhenSmkPacketReceived;
 
-
+extern Spidermesh smk900;
 Bridge::Bridge()
 {
 
@@ -22,12 +25,15 @@ Bridge::Bridge(int _port)
     enabled=false;
     state = WAIT;
     port = _port;
+    cbWhenSmkPacketReceived = [](apiframe, String){};
+    cbAddPacketToSmkTxBuffer = [](apiframe){};
 }
 
 void Bridge::init()
 {
     bridge_server = new WiFiServer(port);
     bridge_server->begin();
+    Serial.println("bridge_server->begin()");
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -45,6 +51,7 @@ bool Bridge::taskloop()
         {
             cbConnecting();
             state = CONNECTED;
+            delay(100);
         }
     }
     else if(state == CONNECTED)
@@ -58,46 +65,31 @@ bool Bridge::taskloop()
         else //core task
         {
             int size;
-            uint8_t buffer[120];
             auto m = millis();
             uint64_t timestamp= millis()+10000;
-
+            //Serial.println("BUG1");
             while((size = client.available()) && (timestamp>millis()))
             {
+                uint8_t buffer[120];
                 client.read(buffer, size);
                 parseApiFromHost(buffer,size);
             }
-            write();
+            //Serial.println("BUG2");
+
+            for(auto p:packetList)
+            {
+                for(auto b:p) client.write(b);
+                cbWhenSmkPacketReceived(p, "SMK:");
+                //printApiPacket(p,"SMK");
+            }            
+            packetList.clear();
+            //Serial.println("BUG3");
+
+
         }
     }
     return ret;
 }
-
-size_t Bridge::write()
-{
-    static uint8_t buffer[120];
-    size_t i=0;
-    for(auto p:packetList)
-    {
-        putPacketInsideBuffer(p, buffer);
-        client.write(buffer, p.size());
-        //printApiPacket(buffer, p.size());
-        i+=p.size();
-        packetList.pop_front();
-        //Serial.println();
-    }
-}
-
-void Bridge::putPacketInsideBuffer(apiframe packet, uint8_t* buffer)
-{
-    apiframe buf_hex;
-    for(int i=packet.size()-1; i>=0; i--)
-    {
-        buffer[i]=packet.back();
-        packet.pop_back();
-    }
-}
-
 
 //------------------------------------------------------------------------------------------------
 void Bridge::parseApiFromHost(uint8_t* buf, uint16_t len)
@@ -149,8 +141,9 @@ void Bridge::parseApiFromHost(uint8_t* buf, uint16_t len)
                 if (id_pkt-last_idx_packet >= len_pkt+3)
                 {
                     last_idx_packet= id_pkt;
-                    cbWhenSmkPacketReceived(cmd_pkt,"SMKRX:");
+                    cbWhenSmkPacketReceived(cmd_pkt,"ETH:");
                     cbAddPacketToSmkTxBuffer(cmd_pkt);
+                    //smk900.addApiPacketLowPriority(cmd_pkt);
 
                     //Serial.println("  will be sent");
                     cmd_pkt.clear();

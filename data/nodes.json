@@ -1,14 +1,14 @@
 {
     "0.0.172.51": {
         "name": "Office1",
-        "type": "vacuum"
+        "type": "input"
     },
     "0.0.172.52": {
         "name": "Office2",
-        "type": "vacuum"
+        "type": "input"
     },
     "0.0.64.62": {
         "name": "Office3",
-        "type": "vacuum"
+        "type": "input"
     }
 }
